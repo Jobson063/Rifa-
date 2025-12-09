@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Rifa - 300 Números (Jobson)</title>
+<style>
+  :root{
+    --bg:#0a0a0a; --card:#111; --accent:#00ff88; --muted:#9ca3af; --white:#fff;
+  }
+  body{ background:var(--bg); color:var(--white); font-family:Arial,Helvetica,sans-serif; margin:0; padding:18px; }
+  h1{ text-align:center; color:var(--accent); margin-bottom:12px; }
+  .wrap{ max-width:980px; margin:0 auto; }
+  .top { display:flex; gap:16px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-bottom:16px; }
+  .card{ background:var(--card); padding:14px; border-radius:10px; border:2px solid rgba(255,255,255,0.03); box-shadow:0 6px 18px rgba(0,0,0,0.5); }
+  .premio h2{ color:var(--accent); text-shadow:0 0 8px #00ff88; margin:0 0 8px 0; }
+  .form input{ width:100%; padding:10px; margin-bottom:8px; border-radius:6px; border:1px solid #333; background:#0b0b0b; color:var(--white); }
+  .numeros{ display:grid; grid-template-columns: repeat(10, 1fr); gap:8px; margin-top:12px; }
+  .num{ padding:8px; background:#1c1c1c; border-radius:6px; text-align:center; cursor:pointer; user-select:none; border:1px solid #333; transition:all .12s; }
+  .num:hover{ transform:translateY(-3px); background:#222; }
+  .num.sel{ background:#ffaa00; color:#000; font-weight:700; }
+  .num.vendido{ background:#c0392b !important; color:#fff; cursor:not-allowed; text-decoration:line-through; }
+  button.primary{ width:100%; padding:12px; border-radius:8px; border:none; background:#00aaff; color:#000; font-weight:700; cursor:pointer; margin-top:8px; }
+  .status{ color:var(--muted); font-size:14px; margin-top:6px; }
+  @media(max-width:700px){
+    .numeros{ grid-template-columns: repeat(6, 1fr); }
+  }
+  @media(max-width:420px){
+    .numeros{ grid-template-columns: repeat(4, 1fr); }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🎉 Rifa — Pagando minha Faculdade (1 a 300)</h1>
+
+    <div class="top">
+      <div class="card premio" style="flex:1">
+        <h2>💰 Prêmio: R$ 1.000,00</h2>
+        <p style="margin:6px 0 0 0">Sorteio no Instagram: <strong>@jobsondrums</strong></p>
+      </div>
+
+      <div class="card pix-box" style="width:300px">
+        <h3 style="margin:0 0 6px 0">💸 PIX</h3>
+        <div style="font-weight:700; font-size:18px">114.669.621-35</div>
+        <div style="font-size:14px; color:var(--muted); margin-top:6px">R$ 10,00 por número</div>
+      </div>
+    </div>
+
+    <div class="card form" style="margin-bottom:12px">
+      <h3 style="margin-top:0">🧍 Dados do comprador</h3>
+      <input id="nome" placeholder="Nome completo" />
+      <input id="cidade" placeholder="Cidade / Estado" />
+      <input id="telefone" placeholder="Telefone" />
+      <div style="display:flex; gap:8px; align-items:center;">
+        <div style="flex:1">
+          <button class="primary" id="btnFinalizar">Finalizar compra</button>
+        </div>
+        <div style="width:42px">
+          <button id="btnRefresh" title="Atualizar">↻</button>
+        </div>
+      </div>
+      <div class="status" id="status">Carregando números...</div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">🔢 Escolha seus números</h3>
+      <div class="numeros" id="numeros"></div>
+    </div>
+  </div>
+
+  <!-- Firebase compat libs -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <script>
+  /* ============================
+     COLE SEU firebaseConfig AQUI
+     (vocẽ já me passou)
+     ============================ */
+  const firebaseConfig = {
+    apiKey: "AIzaSyD-1rHYvoDwaIPmdYczGXf_wW9-yJfv2Dc",
+    authDomain: "rifa-solidaria-dc4ed.firebaseapp.com",
+    projectId: "rifa-solidaria-dc4ed",
+    storageBucket: "rifa-solidaria-dc4ed.appspot.com",
+    messagingSenderId: "13080629726",
+    appId: "1:13080629726:web:409ca392b19592281808d4f",
+    measurementId: "G-XCEXCCEEYR"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  const TOTAL = 300;
+  const numerosContainer = document.getElementById('numeros');
+  const statusEl = document.getElementById('status');
+  const btnFinalizar = document.getElementById('btnFinalizar');
+  const btnRefresh = document.getElementById('btnRefresh');
+
+  // estado local: seleção antes de confirmar
+  let selecionados = new Set();
+
+  // cria a grade de botões (DOM)
+  function criarGrade() {
+    numerosContainer.innerHTML = '';
+    for (let i = 1; i <= TOTAL; i++) {
+      const d = document.createElement('div');
+      d.className = 'num';
+      d.id = 'num-' + i;
+      d.innerText = i;
+      d.onclick = () => toggleSelecionado(i);
+      numerosContainer.appendChild(d);
+    }
+  }
+
+  // alterna seleção (somente se não estiver vendido)
+  function toggleSelecionado(n) {
+    const el = document.getElementById('num-' + n);
+    if (!el || el.classList.contains('vendido')) return;
+    if (el.classList.contains('sel')) {
+      el.classList.remove('sel');
+      selecionados.delete(n);
+    } else {
+      el.classList.add('sel');
+      selecionados.add(n);
+    }
+  }
+
+  // atualiza o UI conforme snapshot do Firestore
+  function escutarVendidos() {
+    db.collection('numeros').onSnapshot(snapshot => {
+      // limpa todos vendidos
+      for (let i = 1; i <= TOTAL; i++) {
+        const el = document.getElementById('num-' + i);
+        if (el) {
+          el.classList.remove('vendido');
+          // se estava selecionado por este usuário, mantém seleção visual (mas removemos se foi vendido)
+          if (el.classList.contains('sel')) {
+            // nothing
+          }
+        }
+      }
+
+      snapshot.forEach(doc => {
+        const id = parseInt(doc.id, 10);
+        const data = doc.data();
+        const el = document.getElementById('num-' + id);
+        if (el) {
+          if (data.vendido === true) {
+            el.classList.add('vendido');
+            // se esse número estava selecionado pelo usuário, tirar a seleção
+            if (el.classList.contains('sel')) {
+              el.classList.remove('sel');
+              selecionados.delete(id);
+            }
+            // opcional: título com nome do comprador
+            el.title = data.nome ? `Vendido para ${data.nome}` : 'Vendido';
+          } else {
+            el.classList.remove('vendido');
+            el.title = '';
+          }
+        }
+      });
+
+      statusEl.innerText = `Atualizado: ${snapshot.size} registros na coleção (apenas documentos criados).`;
+    }, err => {
+      console.error('Erro onSnapshot:', err);
+      statusEl.innerText = 'Erro ao conectar com Firestore. Veja console.';
+    });
+  }
+
+  // cria documentos 1..300 caso coleção esteja vazia
+  async function inicializarColecaoSeVazia() {
+    try {
+      const snap = await db.collection('numeros').limit(1).get();
+      if (!snap.empty) {
+        console.log('Coleção já inicializada.');
+        return;
+      }
+      statusEl.innerText = 'Inicializando base de números (1..300)...';
+
+      // Criar em lotes (batch) para não ultrapassar limites
+      let batch = db.batch();
+      let ops = 0;
+      for (let i = 1; i <= TOTAL; i++) {
+        const ref = db.collection('numeros').doc(String(i));
+        batch.set(ref, { vendido: false });
+        ops++;
+        // commit a cada 200 ops
+        if (ops === 200) {
+          await batch.commit();
+          batch = db.batch();
+          ops = 0;
+        }
+      }
+      if (ops > 0) await batch.commit();
+
+      statusEl.innerText = 'Base inicializada. Você está pronto!';
+      console.log('Coleção numeros inicializada.');
+    } catch (e) {
+      console.error('Erro inicializarColecaoSeVazia:', e);
+      statusEl.innerText = 'Erro ao inicializar base. Veja console.';
+    }
+  }
+
+  // tenta reservar números de forma atômica (transaction)
+  async function reservarNumeros(numerosArray, comprador) {
+    // numerosArray: [1,2,3]
+    // comprador: { nome, cidade, telefone }
+    const sucesso = [];
+    const falha = [];
+
+    for (const n of numerosArray) {
+      const ref = db.collection('numeros').doc(String(n));
+      try {
+        await db.runTransaction(async (tx) => {
+          const doc = await tx.get(ref);
+          if (!doc.exists) {
+            // se não existir, cria com vendido=true
+            tx.set(ref, { vendido: true, ...comprador, horario: new Date().toISOString() });
+            return;
+          }
+          const data = doc.data();
+          if (data && data.vendido === true) {
+            throw new Error('Já vendido');
+          }
+          tx.update(ref, { vendido: true, ...comprador, horario: new Date().toISOString() });
+        });
+        sucesso.push(n);
+      } catch (err) {
+        falha.push(n);
+        console.warn('Não foi possível reservar', n, err && err.message);
+      }
+    }
+    return { sucesso, falha };
+  }
+
+  // evento do botão finalizar
+  btnFinalizar.addEventListener('click', async () => {
+    const nome = document.getElementById('nome').value.trim();
+    const cidade = document.getElementById('cidade').value.trim();
+    const telefone = document.getElementById('telefone').value.trim();
+
+    if (!nome || !cidade || !telefone) {
+      alert('Preencha nome, cidade e telefone antes.');
+      return;
+    }
+    if (selecionados.size === 0) {
+      alert('Selecione ao menos 1 número.');
+      return;
+    }
+
+    const arr = Array.from(selecionados).sort((a,b)=>a-b);
+    if (!confirm(`Confirmar compra dos números: ${arr.join(', ')} ?`)) return;
+
+    statusEl.innerText = 'Tentando reservar os números...';
+    btnFinalizar.disabled = true;
+
+    const comprador = { nome, cidade, telefone };
+    const res = await reservarNumeros(arr, comprador);
+
+    if (res.sucesso.length > 0) {
+      // montar mensagem para WhatsApp com os números realmente comprados
+      const total = res.sucesso.length * 10;
+      const msg = encodeURIComponent(
+        `Olá! Quero confirmar minha participação na rifa.\n\n` +
+        `👤 Nome: ${nome}\n` +
+        `📍 Cidade: ${cidade}\n` +
+        `📞 Telefone: ${telefone}\n\n` +
+        `🎟 Números escolhidos: ${res.sucesso.join(", ")}\n` +
+        `💰 Total: R$ ${total},00`
+      );
+      // redireciona (ajuste o número se quiser)
+      window.location.href = `https://wa.me/5563999467072?text=${msg}`;
+    }
+
+    if (res.falha.length > 0) {
+      alert('Alguns números já foram vendidos por outra pessoa: ' + res.falha.join(', '));
+    }
+
+    btnFinalizar.disabled = false;
+    statusEl.innerText = 'Operação concluída.';
+  });
+
+  btnRefresh.addEventListener('click', () => {
+    // força recarregar snapshot (na prática onSnapshot já atualiza)
+    statusEl.innerText = 'Atualizando...';
+    // sem ação adicional, onSnapshot já está ativo
+    setTimeout(()=> statusEl.innerText = 'Atualizado.', 600);
+  });
+
+  // inicialização
+  (async function init() {
+    criarGrade();
+    await inicializarColecaoSeVazia(); // popula 1..300 se necessário
+    escutarVendidos(); // mantém UI em tempo real
+    statusEl.innerText = 'Pronto — selecione números e finalize.';
+  })();
+
+  </script>
+</body>
+</html>
